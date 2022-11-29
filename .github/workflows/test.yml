@@ -10,5 +10,5 @@ jobs:
           profile: minimal
           components: rustfmt, clippy
           override: true
-      - run: cargo fmt --all --check && cargo clippy --workspace -- -D warnings
+      - run: cargo fmt --all -- --check && cargo clippy --workspace -- -D warnings
       - run: cargo test
