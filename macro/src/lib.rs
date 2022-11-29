@@ -41,6 +41,7 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
     for f in fields.iter_mut() {
         f.attrs.rename_by_rules(attrs.rename_all_rules());
     }
+    fields.retain(|f| !f.attrs.skip_serializing());
 
     let fields_struct_ident = &quote::format_ident!("{}Fields", ident);
     let fields_struct_idents = fields.iter().map(|f| f.original.ident.clone().unwrap());
@@ -61,7 +62,7 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
         #[derive(Debug, Clone, Copy)]
         #vis struct #fields_struct_ident {
             #(
-                pub #fields_struct_idents: ::serde_partial::Field<#ident>,
+                pub #fields_struct_idents: ::serde_partial::Field<'static, #ident>,
             )*
         }
 
@@ -74,7 +75,7 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
         }
 
         impl ::core::iter::IntoIterator for #fields_struct_ident {
-            type Item = ::serde_partial::Field<#ident>;
+            type Item = ::serde_partial::Field<'static, #ident>;
             type IntoIter = ::core::array::IntoIter<Self::Item, #fields_len>;
 
             fn into_iter(self) -> Self::IntoIter {
@@ -97,7 +98,7 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
         }
 
         impl ::serde_partial::SerializeFilter<#ident> for #filter_struct_ident {
-            fn skip(&self, field: ::serde_partial::Field<#ident>) -> bool {
+            fn skip(&self, field: ::serde_partial::Field<'_, #ident>) -> bool {
                 match field.name() {
                     #(
                         #filter_struct_names => !self.#filter_struct_idents_impl,
@@ -109,14 +110,14 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
     };
 
     let trait_impl = quote::quote! {
-        impl ::serde_partial::SerializePartial for #ident {
+        impl<'a> ::serde_partial::SerializePartial<'a> for #ident {
             type Fields = #fields_struct_ident;
             type Filter = #filter_struct_ident;
 
-            fn with_fields<F, I>(&self, select: F) -> ::serde_partial::Partial<'_, Self>
+            fn with_fields<F, I>(&'a self, select: F) -> ::serde_partial::Partial<'a, Self>
             where
                 F: ::core::ops::FnOnce(Self::Fields) -> I,
-                I: ::core::iter::IntoIterator<Item = ::serde_partial::Field<Self>>,
+                I: ::core::iter::IntoIterator<Item = ::serde_partial::Field<'a, Self>>,
             {
                 let fields = Self::Fields::FIELDS;
                 let mut filter = <Self::Filter as ::core::default::Default>::default();

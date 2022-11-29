@@ -2,23 +2,28 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 
-use core::{fmt, marker::PhantomData};
+use core::{cmp, fmt, hash, marker::PhantomData};
 
 use serde::{ser::SerializeStruct, Serialize, Serializer};
+
+#[cfg(feature = "alloc")]
+mod alloc;
+#[cfg(feature = "std")]
+mod std;
 
 /// Derive macro for the [`SerializePartial`] trait.
 pub use serde_partial_macro::SerializePartial;
 
 /// Trait implemented by types which can be partially serialized.
-pub trait SerializePartial: Serialize {
+pub trait SerializePartial<'a>: Serialize {
     /// Type which provides the list of serializable fields.
     ///
     /// When using the derive macro, this type is a struct with the same fields as the original struct.
     /// It will implement [`IntoIterator`] to make it possible to iterate over the available fields, and [`Copy`] and [`Clone`] for convenience.
     /// It will also have a `FIELDS: Self` associated constant.
-    type Fields;
+    type Fields: 'a;
     /// Type which can be used to check whether a serializable field should be skipped.
-    type Filter: SerializeFilter<Self>;
+    type Filter: SerializeFilter<Self> + 'a;
 
     /// Returns a value which forwards the [`Serialize`] implementation but only serializes the selected fields.
     ///
@@ -73,10 +78,10 @@ pub trait SerializePartial: Serialize {
     /// assert_eq!(<User as SerializePartial>::Fields::FIELDS.age.name(), "age");
     /// assert_eq!(<User as SerializePartial>::Fields::FIELDS.email.name(), "contact");
     /// ```
-    fn with_fields<F, I>(&self, select: F) -> Partial<'_, Self>
+    fn with_fields<F, I>(&'a self, select: F) -> Partial<'a, Self>
     where
         F: FnOnce(Self::Fields) -> I,
-        I: IntoIterator<Item = Field<Self>>;
+        I: IntoIterator<Item = Field<'a, Self>>;
 
     /// Same as [`with_fields`][SerializePartial::with_fields] but fields are opt-out instead of opt-in.
     ///
@@ -111,10 +116,10 @@ pub trait SerializePartial: Serialize {
     ///     })
     /// );
     /// ```
-    fn without_fields<F, I>(&self, select: F) -> Partial<'_, Self, InverseFilter<Self>>
+    fn without_fields<F, I>(&'a self, select: F) -> Partial<'a, Self, InverseFilter<'a, Self>>
     where
         F: FnOnce(Self::Fields) -> I,
-        I: IntoIterator<Item = Field<Self>>,
+        I: IntoIterator<Item = Field<'a, Self>>,
     {
         let Partial { value, filter } = self.with_fields(select);
         Partial {
@@ -127,14 +132,14 @@ pub trait SerializePartial: Serialize {
 /// Trait implemented by types which can be used to filter the serializable fields of another type.
 pub trait SerializeFilter<T: ?Sized> {
     /// Returns whether the specified field should be skipped.
-    fn skip(&self, field: Field<T>) -> bool;
+    fn skip(&self, field: Field<'_, T>) -> bool;
 }
 
 /// A type which implements [`Serialize`] by forwarding the implementation to the value it references while skipping fields according to its filter.
 #[derive(Debug)]
-pub struct Partial<'a, T, F = <T as SerializePartial>::Filter>
+pub struct Partial<'a, T, F = <T as SerializePartial<'a>>::Filter>
 where
-    T: ?Sized + SerializePartial,
+    T: ?Sized + SerializePartial<'a>,
 {
     /// The value to serialize.
     pub value: &'a T,
@@ -143,7 +148,7 @@ where
 }
 impl<'a, T, F> Clone for Partial<'a, T, F>
 where
-    T: ?Sized + SerializePartial,
+    T: ?Sized + SerializePartial<'a>,
     F: Clone,
 {
     fn clone(&self) -> Self {
@@ -155,19 +160,18 @@ where
 }
 impl<'a, T, F> Copy for Partial<'a, T, F>
 where
-    T: ?Sized + SerializePartial,
+    T: ?Sized + SerializePartial<'a>,
     F: Copy,
 {
 }
 
 /// Newtype around a field name for the specified type.
-#[derive(PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct Field<T: ?Sized> {
-    name: &'static str,
+pub struct Field<'a, T: ?Sized> {
+    name: &'a str,
     _ty: PhantomData<T>,
 }
-impl<T: ?Sized> Clone for Field<T> {
+impl<T: ?Sized> Clone for Field<'_, T> {
     fn clone(&self) -> Self {
         Self {
             name: self.name,
@@ -175,19 +179,19 @@ impl<T: ?Sized> Clone for Field<T> {
         }
     }
 }
-impl<T: ?Sized> Copy for Field<T> {}
+impl<T: ?Sized> Copy for Field<'_, T> {}
 
 /// A [`SerializeFilter`] which inverts the behavior of the filter it wraps.
-pub struct InverseFilter<T, F = <T as SerializePartial>::Filter>
+pub struct InverseFilter<'a, T, F = <T as SerializePartial<'a>>::Filter>
 where
-    T: ?Sized + SerializePartial,
+    T: ?Sized + SerializePartial<'a>,
 {
     filter: F,
-    _ty: PhantomData<T>,
+    _ty: PhantomData<&'a T>,
 }
-impl<T, F> Clone for InverseFilter<T, F>
+impl<'a, T, F> Clone for InverseFilter<'a, T, F>
 where
-    T: ?Sized + SerializePartial,
+    T: ?Sized + SerializePartial<'a>,
     F: Clone,
 {
     fn clone(&self) -> Self {
@@ -197,18 +201,18 @@ where
         }
     }
 }
-impl<T, F> Copy for InverseFilter<T, F>
+impl<'a, T, F> Copy for InverseFilter<'a, T, F>
 where
-    T: ?Sized + SerializePartial,
+    T: ?Sized + SerializePartial<'a>,
     F: Copy,
 {
 }
 
-impl<T: ?Sized> Field<T> {
+impl<'a, T: ?Sized> Field<'a, T> {
     /// Creates a new field.
     ///
     /// The name should be the serde field name and not the Rust field name.
-    pub const fn new(name: &'static str) -> Self {
+    pub const fn new(name: &'a str) -> Self {
         Self {
             name,
             _ty: PhantomData,
@@ -216,12 +220,12 @@ impl<T: ?Sized> Field<T> {
     }
 
     /// Returns the field name.
-    pub const fn name(&self) -> &'static str {
+    pub const fn name(&self) -> &'a str {
         self.name
     }
 }
 
-impl<T: ?Sized> fmt::Debug for Field<T> {
+impl<T: ?Sized> fmt::Debug for Field<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Field")
             .field("name", &self.name)
@@ -230,9 +234,31 @@ impl<T: ?Sized> fmt::Debug for Field<T> {
     }
 }
 
-impl<T, F> InverseFilter<T, F>
+impl<T: ?Sized> PartialEq for Field<'_, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+impl<T: ?Sized> Eq for Field<'_, T> {}
+impl<T: ?Sized> hash::Hash for Field<'_, T> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
+impl<T: ?Sized> PartialOrd for Field<'_, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        self.name.partial_cmp(other.name)
+    }
+}
+impl<T: ?Sized> Ord for Field<'_, T> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.name.cmp(other.name)
+    }
+}
+
+impl<'a, T, F> InverseFilter<'a, T, F>
 where
-    T: ?Sized + SerializePartial,
+    T: ?Sized + SerializePartial<'a>,
     F: SerializeFilter<T>,
 {
     /// Creates a filter which inverts the behavior of the provided one.
@@ -244,9 +270,9 @@ where
     }
 }
 
-impl<T, F> fmt::Debug for InverseFilter<T, F>
+impl<'a, T, F> fmt::Debug for InverseFilter<'a, T, F>
 where
-    T: ?Sized + SerializePartial,
+    T: ?Sized + SerializePartial<'a>,
     F: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -254,19 +280,19 @@ where
     }
 }
 
-impl<T, F> SerializeFilter<T> for InverseFilter<T, F>
+impl<'a, T, F> SerializeFilter<T> for InverseFilter<'a, T, F>
 where
-    T: ?Sized + SerializePartial,
+    T: ?Sized + SerializePartial<'a>,
     F: SerializeFilter<T>,
 {
-    fn skip(&self, field: Field<T>) -> bool {
+    fn skip(&self, field: Field<'_, T>) -> bool {
         !self.filter.skip(field)
     }
 }
 
 impl<T, F> Serialize for Partial<'_, T, F>
 where
-    T: ?Sized + SerializePartial,
+    T: ?Sized + for<'a> SerializePartial<'a>,
     F: SerializeFilter<T>,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -285,7 +311,7 @@ where
 struct PartialSerializer<'a, S, T, F>
 where
     S: Serializer,
-    T: ?Sized + SerializePartial,
+    T: ?Sized + for<'p> SerializePartial<'p>,
     F: SerializeFilter<T>,
 {
     s: S,
@@ -296,7 +322,7 @@ where
 struct PartialSerializeStruct<'a, S, T, F>
 where
     S: Serializer,
-    T: ?Sized + SerializePartial,
+    T: ?Sized + for<'p> SerializePartial<'p>,
     F: SerializeFilter<T>,
 {
     ss: S::SerializeStruct,
@@ -307,7 +333,7 @@ where
 impl<'a, S, T, F> Serializer for PartialSerializer<'a, S, T, F>
 where
     S: Serializer,
-    T: ?Sized + SerializePartial,
+    T: ?Sized + for<'p> SerializePartial<'p>,
     F: SerializeFilter<T>,
 {
     type Ok = S::Ok;
@@ -486,10 +512,10 @@ where
     }
 }
 
-impl<S, T, F> SerializeStruct for PartialSerializeStruct<'_, S, T, F>
+impl<'a, S, T, F> SerializeStruct for PartialSerializeStruct<'a, S, T, F>
 where
     S: Serializer,
-    T: ?Sized + SerializePartial,
+    T: ?Sized + for<'p> SerializePartial<'p>,
     F: SerializeFilter<T>,
 {
     type Ok = <S::SerializeStruct as SerializeStruct>::Ok;

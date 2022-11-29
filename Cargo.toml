@@ -1,6 +1,6 @@
 [package]
 name = "serde-partial"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.56.0"
 authors = ["Raphaël Thériault <self@raftar.io>"]
@@ -8,9 +8,14 @@ license = "MIT OR Apache-2.0"
 description = "Serde partial serialization made easy"
 repository = "https://github.com/raftario/serde-partial"
 
+[features]
+default = ["alloc", "std"]
+alloc = ["serde/alloc"]
+std = ["serde/std"]
+
 [dependencies]
 serde = { version = "1", default-features = false }
-serde-partial-macro = { path = "macro", version = "0.1.0" }
+serde-partial-macro = { path = "macro", version = "0.2.0" }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
