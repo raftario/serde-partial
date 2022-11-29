@@ -1,12 +1,14 @@
 [package]
 name = "serde-partial"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.56.0"
 authors = ["Raphaël Thériault <self@raftar.io>"]
 license = "MIT OR Apache-2.0"
 description = "Serde partial serialization made easy"
 repository = "https://github.com/raftario/serde-partial"
+keywords = ["serde", "partial", "filter", "serialization"]
+categories = ["encoding", "rust-patterns", "no-std"]
 
 [features]
 default = ["alloc", "std"]
