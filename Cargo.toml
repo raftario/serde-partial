@@ -10,7 +10,7 @@ repository = "https://github.com/raftario/serde-partial"
 
 [dependencies]
 serde = { version = "1", default-features = false }
-serde-partial-macro = { path = "macro" }
+serde-partial-macro = { path = "macro", version = "0.1.0" }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
