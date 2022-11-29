@@ -5,6 +5,8 @@ edition = "2021"
 rust-version = "1.56.0"
 authors = ["Raphaël Thériault <self@raftar.io>"]
 license = "MIT OR Apache-2.0"
+description = "Serde partial serialization made easy"
+repository = "https://github.com/raftario/serde-partial"
 
 [dependencies]
 serde = { version = "1", default-features = false }
