@@ -236,7 +236,7 @@ where
     F: SerializeFilter<T>,
 {
     /// Creates a filter which inverts the behavior of the provided one.
-    pub const fn new(filter: F) -> Self {
+    pub fn new(filter: F) -> Self {
         Self {
             filter,
             _ty: PhantomData,

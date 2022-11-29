@@ -138,7 +138,7 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
         }
     };
 
-    quote::quote! {
+    let derive = quote::quote! {
         #[doc(hidden)]
         #[allow(non_upper_case_globals, non_camel_case_types)]
         const _: () = {
@@ -146,6 +146,6 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
             #filter_struct
             #trait_impl
         };
-    }
-    .into()
+    };
+    derive.into()
 }
