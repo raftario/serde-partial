@@ -1,4 +1,7 @@
-use core::{hash::Hash, iter::Map};
+use core::{
+    hash::{BuildHasher, Hash},
+    iter::Map,
+};
 use std::collections::{
     hash_map::{HashMap, Keys},
     HashSet,
@@ -8,14 +11,15 @@ use serde::Serialize;
 
 use crate::{Field, Partial, SerializeFilter, SerializePartial};
 
-impl<'a, K, V> SerializePartial<'a> for HashMap<K, V>
+impl<'a, K, V, S> SerializePartial<'a> for HashMap<K, V, S>
 where
     K: Hash + Eq + AsRef<str> + Serialize + 'a,
     V: Serialize + 'a,
+    S: BuildHasher + Default + 'a,
 {
     #[allow(clippy::type_complexity)]
     type Fields = Map<Keys<'a, K, V>, fn(&'a K) -> Field<'a, Self>>;
-    type Filter = HashSet<Field<'a, Self>>;
+    type Filter = HashSet<Field<'a, Self>, S>;
 
     fn with_fields<F, I>(&'a self, select: F) -> Partial<'a, Self>
     where
@@ -31,8 +35,11 @@ where
     }
 }
 
-impl<'a, K, V> SerializeFilter<HashMap<K, V>> for HashSet<Field<'a, HashMap<K, V>>> {
-    fn skip(&self, field: Field<'_, HashMap<K, V>>) -> bool {
+impl<'a, K, V, S> SerializeFilter<HashMap<K, V, S>> for HashSet<Field<'a, HashMap<K, V, S>>, S>
+where
+    S: BuildHasher,
+{
+    fn skip(&self, field: Field<'_, HashMap<K, V, S>>) -> bool {
         !self.contains(&field)
     }
 
