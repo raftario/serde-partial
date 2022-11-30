@@ -2,14 +2,28 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std;
+
 use core::{cmp, fmt, hash, marker::PhantomData};
 
-use serde::{ser::SerializeStruct, Serialize, Serializer};
+use serde::ser::{Serialize, Serializer};
 
 #[cfg(feature = "alloc")]
-mod alloc;
+#[cfg_attr(feature = "alloc", path = "alloc.rs")]
+mod feature_alloc;
 #[cfg(feature = "std")]
-mod std;
+#[cfg_attr(feature = "std", path = "std.rs")]
+mod feature_std;
+#[path = "map.rs"]
+mod serde_map;
+#[path = "struct.rs"]
+mod serde_struct;
+
+pub mod filter;
+pub use filter::SerializeFilter;
 
 /// Derive macro for the [`SerializePartial`] trait.
 pub use serde_partial_macro::SerializePartial;
@@ -116,7 +130,10 @@ pub trait SerializePartial<'a>: Serialize {
     ///     })
     /// );
     /// ```
-    fn without_fields<F, I>(&'a self, select: F) -> Partial<'a, Self, InverseFilter<'a, Self>>
+    fn without_fields<F, I>(
+        &'a self,
+        select: F,
+    ) -> Partial<'a, Self, filter::InverseFilter<'a, Self>>
     where
         F: FnOnce(Self::Fields) -> I,
         I: IntoIterator<Item = Field<'a, Self>>,
@@ -124,15 +141,9 @@ pub trait SerializePartial<'a>: Serialize {
         let Partial { value, filter } = self.with_fields(select);
         Partial {
             value,
-            filter: InverseFilter::new(filter),
+            filter: filter::InverseFilter::new(filter),
         }
     }
-}
-
-/// Trait implemented by types which can be used to filter the serializable fields of another type.
-pub trait SerializeFilter<T: ?Sized> {
-    /// Returns whether the specified field should be skipped.
-    fn skip(&self, field: Field<'_, T>) -> bool;
 }
 
 /// A type which implements [`Serialize`] by forwarding the implementation to the value it references while skipping fields according to its filter.
@@ -146,6 +157,14 @@ where
     /// The field filter to use.
     pub filter: F,
 }
+
+/// Newtype around a field name for the specified type.
+#[repr(transparent)]
+pub struct Field<'a, T: ?Sized> {
+    name: &'a str,
+    _ty: PhantomData<T>,
+}
+
 impl<'a, T, F> Clone for Partial<'a, T, F>
 where
     T: ?Sized + SerializePartial<'a>,
@@ -159,49 +178,6 @@ where
     }
 }
 impl<'a, T, F> Copy for Partial<'a, T, F>
-where
-    T: ?Sized + SerializePartial<'a>,
-    F: Copy,
-{
-}
-
-/// Newtype around a field name for the specified type.
-#[repr(transparent)]
-pub struct Field<'a, T: ?Sized> {
-    name: &'a str,
-    _ty: PhantomData<T>,
-}
-impl<T: ?Sized> Clone for Field<'_, T> {
-    fn clone(&self) -> Self {
-        Self {
-            name: self.name,
-            _ty: PhantomData,
-        }
-    }
-}
-impl<T: ?Sized> Copy for Field<'_, T> {}
-
-/// A [`SerializeFilter`] which inverts the behavior of the filter it wraps.
-pub struct InverseFilter<'a, T, F = <T as SerializePartial<'a>>::Filter>
-where
-    T: ?Sized + SerializePartial<'a>,
-{
-    filter: F,
-    _ty: PhantomData<&'a T>,
-}
-impl<'a, T, F> Clone for InverseFilter<'a, T, F>
-where
-    T: ?Sized + SerializePartial<'a>,
-    F: Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            filter: self.filter.clone(),
-            _ty: PhantomData,
-        }
-    }
-}
-impl<'a, T, F> Copy for InverseFilter<'a, T, F>
 where
     T: ?Sized + SerializePartial<'a>,
     F: Copy,
@@ -224,6 +200,16 @@ impl<'a, T: ?Sized> Field<'a, T> {
         self.name
     }
 }
+
+impl<T: ?Sized> Clone for Field<'_, T> {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name,
+            _ty: PhantomData,
+        }
+    }
+}
+impl<T: ?Sized> Copy for Field<'_, T> {}
 
 impl<T: ?Sized> fmt::Debug for Field<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -256,40 +242,6 @@ impl<T: ?Sized> Ord for Field<'_, T> {
     }
 }
 
-impl<'a, T, F> InverseFilter<'a, T, F>
-where
-    T: ?Sized + SerializePartial<'a>,
-    F: SerializeFilter<T>,
-{
-    /// Creates a filter which inverts the behavior of the provided one.
-    pub fn new(filter: F) -> Self {
-        Self {
-            filter,
-            _ty: PhantomData,
-        }
-    }
-}
-
-impl<'a, T, F> fmt::Debug for InverseFilter<'a, T, F>
-where
-    T: ?Sized + SerializePartial<'a>,
-    F: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("InverseFilter").field(&self.filter).finish()
-    }
-}
-
-impl<'a, T, F> SerializeFilter<T> for InverseFilter<'a, T, F>
-where
-    T: ?Sized + SerializePartial<'a>,
-    F: SerializeFilter<T>,
-{
-    fn skip(&self, field: Field<'_, T>) -> bool {
-        !self.filter.skip(field)
-    }
-}
-
 impl<T, F> Serialize for Partial<'_, T, F>
 where
     T: ?Sized + for<'a> SerializePartial<'a>,
@@ -311,21 +263,9 @@ where
 struct PartialSerializer<'a, S, T, F>
 where
     S: Serializer,
-    T: ?Sized + for<'p> SerializePartial<'p>,
-    F: SerializeFilter<T>,
+    T: ?Sized,
 {
     s: S,
-    filter: &'a F,
-    _ty: PhantomData<T>,
-}
-
-struct PartialSerializeStruct<'a, S, T, F>
-where
-    S: Serializer,
-    T: ?Sized + for<'p> SerializePartial<'p>,
-    F: SerializeFilter<T>,
-{
-    ss: S::SerializeStruct,
     filter: &'a F,
     _ty: PhantomData<T>,
 }
@@ -339,7 +279,8 @@ where
     type Ok = S::Ok;
     type Error = S::Error;
 
-    type SerializeStruct = PartialSerializeStruct<'a, S, T, F>;
+    type SerializeStruct = serde_struct::PartialSerializeStruct<'a, S, T, F>;
+    type SerializeMap = serde_map::PartialSerializeMap<'a, S, T, F>;
 
     fn serialize_struct(
         self,
@@ -347,15 +288,23 @@ where
         len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
         let PartialSerializer { s, filter, _ty } = self;
+        let len = filter.filtered_len(Some(len)).unwrap_or(len);
         let ss = s.serialize_struct(name, len)?;
-        Ok(PartialSerializeStruct { ss, filter, _ty })
+        Ok(Self::SerializeStruct { ss, filter, _ty })
     }
+
+    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+        let PartialSerializer { s, filter, _ty } = self;
+        let len = filter.filtered_len(len).or(len);
+        let sm = s.serialize_map(len)?;
+        Ok(Self::SerializeMap { sm, filter, _ty })
+    }
+    // collect_map not implemented because we explicitly want serde's default implementation
 
     type SerializeSeq = S::SerializeSeq;
     type SerializeTuple = S::SerializeTuple;
     type SerializeTupleStruct = S::SerializeTupleStruct;
     type SerializeTupleVariant = S::SerializeTupleVariant;
-    type SerializeMap = S::SerializeMap;
     type SerializeStructVariant = S::SerializeStructVariant;
 
     fn is_human_readable(&self) -> bool {
@@ -477,9 +426,6 @@ where
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
         self.s.serialize_tuple_variant(name, index, variant, len)
     }
-    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        self.s.serialize_map(len)
-    }
     fn serialize_struct_variant(
         self,
         name: &'static str,
@@ -501,46 +447,5 @@ where
         <I as IntoIterator>::Item: Serialize,
     {
         self.s.collect_seq(iter)
-    }
-    fn collect_map<K, V, I>(self, iter: I) -> Result<Self::Ok, Self::Error>
-    where
-        K: Serialize,
-        V: Serialize,
-        I: IntoIterator<Item = (K, V)>,
-    {
-        self.s.collect_map(iter)
-    }
-}
-
-impl<'a, S, T, F> SerializeStruct for PartialSerializeStruct<'a, S, T, F>
-where
-    S: Serializer,
-    T: ?Sized + for<'p> SerializePartial<'p>,
-    F: SerializeFilter<T>,
-{
-    type Ok = <S::SerializeStruct as SerializeStruct>::Ok;
-    type Error = <S::SerializeStruct as SerializeStruct>::Error;
-
-    fn serialize_field<TT: ?Sized>(
-        &mut self,
-        key: &'static str,
-        value: &TT,
-    ) -> Result<(), Self::Error>
-    where
-        TT: Serialize,
-    {
-        if self.filter.skip(Field::new(key)) {
-            self.skip_field(key)
-        } else {
-            self.ss.serialize_field(key, value)
-        }
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        self.ss.end()
-    }
-
-    fn skip_field(&mut self, key: &'static str) -> Result<(), Self::Error> {
-        self.ss.skip_field(key)
     }
 }

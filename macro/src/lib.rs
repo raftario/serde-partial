@@ -52,7 +52,8 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
 
     let filter_struct_ident = &quote::format_ident!("{}Filter", ident);
     let filter_struct_idents = fields_struct_idents.clone();
-    let filter_struct_idents_impl = filter_struct_idents.clone();
+    let filter_struct_idents_skip = filter_struct_idents.clone();
+    let filter_struct_idents_len = filter_struct_idents.clone();
     let filter_struct_names = fields_struct_names.clone();
 
     let trait_impl_idents = filter_struct_idents.clone();
@@ -101,10 +102,20 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
             fn skip(&self, field: ::serde_partial::Field<'_, #ident>) -> bool {
                 match field.name() {
                     #(
-                        #filter_struct_names => !self.#filter_struct_idents_impl,
+                        #filter_struct_names => !self.#filter_struct_idents_skip,
                     )*
                     _ => panic!("unknown field"),
                 }
+            }
+
+            fn filtered_len(&self, _len: Option<usize>) -> Option<usize> {
+                let mut len = 0;
+                #(
+                    if self.#filter_struct_idents_len {
+                        len += 1;
+                    }
+                )*
+                Some(len)
             }
         }
     };
