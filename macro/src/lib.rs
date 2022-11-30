@@ -43,34 +43,35 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
     }
     fields.retain(|f| !f.attrs.skip_serializing());
 
-    let fields_struct_ident = &quote::format_ident!("{}Fields", ident);
-    let fields_struct_idents = fields.iter().map(|f| f.original.ident.clone().unwrap());
-    let fields_struct_idents_impl = fields_struct_idents.clone();
-    let fields_struct_idents_iter = fields_struct_idents.clone();
+    let field_idents = fields
+        .iter()
+        .map(|f| f.original.ident.as_ref().unwrap())
+        .collect::<Vec<_>>();
+    let field_idents = &field_idents;
+
+    let field_names = fields
+        .iter()
+        .map(|f| f.attrs.name().serialize_name())
+        .collect::<Vec<_>>();
+    let field_names = &field_names;
+
     let fields_len = fields.len();
-    let fields_struct_names = fields.iter().map(|f| f.attrs.name().serialize_name());
 
+    let fields_struct_ident = &quote::format_ident!("{}Fields", ident);
     let filter_struct_ident = &quote::format_ident!("{}Filter", ident);
-    let filter_struct_idents = fields_struct_idents.clone();
-    let filter_struct_idents_skip = filter_struct_idents.clone();
-    let filter_struct_idents_len = filter_struct_idents.clone();
-    let filter_struct_names = fields_struct_names.clone();
-
-    let trait_impl_idents = filter_struct_idents.clone();
-    let trait_impl_names = filter_struct_names.clone();
 
     let fields_struct = quote::quote! {
         #[derive(Debug, Clone, Copy)]
         #vis struct #fields_struct_ident {
             #(
-                pub #fields_struct_idents: ::serde_partial::Field<'static, #ident>,
+                pub #field_idents: ::serde_partial::Field<'static, #ident>,
             )*
         }
 
         impl #fields_struct_ident {
             pub const FIELDS: Self = Self {
                 #(
-                    #fields_struct_idents_impl: ::serde_partial::Field::new(#fields_struct_names),
+                    #field_idents: ::serde_partial::Field::new(#field_names),
                 )*
             };
         }
@@ -83,7 +84,7 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
                 #[allow(deprecated)]
                 ::core::array::IntoIter::new([
                     #(
-                        self.#fields_struct_idents_iter,
+                        self.#field_idents,
                     )*
                 ])
             }
@@ -94,7 +95,7 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
         #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
         #vis struct #filter_struct_ident {
             #(
-                #filter_struct_idents: bool,
+                #field_idents: bool,
             )*
         }
 
@@ -102,7 +103,7 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
             fn skip(&self, field: ::serde_partial::Field<'_, #ident>) -> bool {
                 match field.name() {
                     #(
-                        #filter_struct_names => !self.#filter_struct_idents_skip,
+                        #field_names => !self.#field_idents,
                     )*
                     _ => panic!("unknown field"),
                 }
@@ -111,7 +112,7 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
             fn filtered_len(&self, _len: Option<usize>) -> Option<usize> {
                 let mut len = 0;
                 #(
-                    if self.#filter_struct_idents_len {
+                    if self.#field_idents {
                         len += 1;
                     }
                 )*
@@ -136,7 +137,7 @@ pub fn serialize_partial(input: TokenStream) -> TokenStream {
                 for filtered in select(fields) {
                     match filtered.name() {
                         #(
-                            #trait_impl_names => { filter.#trait_impl_idents = true }
+                            #field_names => { filter.#field_idents = true }
                         )*
                         _ => panic!("unknown field"),
                     }
